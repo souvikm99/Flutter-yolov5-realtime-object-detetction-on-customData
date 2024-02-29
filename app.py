@@ -1,46 +1,99 @@
-# Flask server (app.py)
-from flask import Flask, request, jsonify, render_template, send_file
-
-import torch
-from PIL import Image
-import io
+from flask import Flask, request, jsonify, send_file, render_template
+from werkzeug.utils import secure_filename
+import os
+import subprocess
+import datetime
+import shutil
 
 app = Flask(__name__)
 
-# Load YOLOv5 model
-model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True)
+UPLOAD_FOLDER = 'uploads/'
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'mp4', 'avi'}
+DETECT_OP_FOLDER = "DetectOP"
+IMAGE_FILE_PATH = ''  # This will be dynamically updated
+
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+def allowed_file(filename):
+    """Check if the file has an allowed extension."""
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def get_content_type(file_path):
+    """Determine the content type based on the file extension."""
+    file_extension = os.path.splitext(file_path)[1].lower()
+    return "video/mp4" if file_extension in ['.mp4', '.avi'] else "image/jpeg"
+
+def run_command(file_path):
+    """Run a command to process the file and update the global IMAGE_FILE_PATH."""
+    global IMAGE_FILE_PATH
+    timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+    temp_output_name = 'temp_output'
+
+    # command = [
+    #     "python", "yolov5/detect.py",
+    #     "--weights", "yolov5s.pt",
+    #     "--source", file_path,
+    #     "--project", DETECT_OP_FOLDER,
+    #     "--name", temp_output_name,
+    # ]
+
+    command = [
+    "python3", "track.py",
+    "--source", file_path,
+    "--output", f"{DETECT_OP_FOLDER}/{temp_output_name}",
+    "--save-vid",
+    "--save-txt",
+    ]
 
 
-@app.route('/')
+    try:
+        subprocess.run(command, check=True)
+        temp_output_path = os.path.join(DETECT_OP_FOLDER, temp_output_name)
+        output_files = os.listdir(temp_output_path)
+        final_output_path = move_and_rename_output_files(temp_output_path, output_files, timestamp)
+        IMAGE_FILE_PATH = final_output_path
+    except subprocess.CalledProcessError as e:
+        print(f"An error occurred: {str(e)}")
+
+def move_and_rename_output_files(temp_output_path, output_files, timestamp):
+    """Move and rename output files from the temporary directory to the final destination."""
+    for original_file_name in output_files:
+        original_file_path = os.path.join(temp_output_path, original_file_name)
+        file_extension = os.path.splitext(original_file_name)[1]
+        final_output_name = f"{timestamp}{file_extension}"
+        final_output_path = os.path.join(DETECT_OP_FOLDER, final_output_name)
+        shutil.move(original_file_path, final_output_path)
+    shutil.rmtree(temp_output_path)
+    return final_output_path
+
+@app.route('/upload', methods=['POST'])
+def upload_file():
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file part'})
+    
+    file = request.files['file']
+    if file.filename == '' or not allowed_file(file.filename):
+        return jsonify({'error': 'No selected file or file type not allowed'})
+
+    filename = secure_filename(file.filename)
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    file.save(file_path)
+    run_command(file_path)
+    return jsonify({'message': 'File uploaded successfully', 'filename': filename})
+
+@app.route('/get-media', methods=['GET'])
+def get_media():
+    if not IMAGE_FILE_PATH:
+        return jsonify({'error': 'No media available'})
+    content_type = get_content_type(IMAGE_FILE_PATH)
+    response = send_file(IMAGE_FILE_PATH, conditional=True)
+    response.headers['Content-Type'] = content_type  # Correct way to set header
+    return response
+
+@app.route('/', methods=['GET'])
 def index():
     return render_template('index.html')
 
-@app.route('/test')
-def index2():
-    return 'Hello, World! This is Flask running on Ngrok.'
-
-
-@app.route('/detect', methods=['POST'])
-def detect():
-    if request.method == 'POST':
-        image_bytes = request.files['image'].read()
-        image = Image.open(io.BytesIO(image_bytes))
-        
-        # Perform inference
-        results = model(image, size=640)
-        
-        # Draw results on image
-        results.render()  # Correctly draws the detections on the image
-        
-        # Save annotated image to a BytesIO buffer
-        buf = io.BytesIO()
-        img_base = results.render()[0]  # Correct way to access the rendered image
-        im = Image.fromarray(img_base)
-        im.save(buf, format="JPEG")
-        buf.seek(0)  # Move to the beginning of the BytesIO buffer
-        
-        return send_file(buf, mimetype='image/jpeg')
-
 
 if __name__ == '__main__':
-    app.run(debug=True, port='5050')
+    app.run(debug=True, port=5050)
