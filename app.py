@@ -29,21 +29,25 @@ def run_command(file_path):
     timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
     temp_output_name = 'temp_output'
 
-    # command = [
-    #     "python", "yolov5/detect.py",
-    #     "--weights", "yolov5s.pt",
-    #     "--source", file_path,
-    #     "--project", DETECT_OP_FOLDER,
-    #     "--name", temp_output_name,
-    # ]
+    file_extension = os.path.splitext(file_path)[1].lower()
 
-    command = [
-    "python3", "track.py",
-    "--source", file_path,
-    "--output", f"{DETECT_OP_FOLDER}/{temp_output_name}",
-    "--save-vid",
-    "--save-txt",
-    ]
+    # Decide which command to run based on file type
+    if file_extension in ['.jpg', '.jpeg', '.png', '.gif']:  # Image files
+        command = [
+            "python", "yolov5/detect.py",
+            "--weights", "yolov5s.pt",
+            "--source", file_path,
+            "--project", DETECT_OP_FOLDER,
+            "--name", temp_output_name,
+        ]
+    else:  # Video files
+        command = [
+            "python3", "track.py",
+            "--source", file_path,
+            "--output", f"{DETECT_OP_FOLDER}/{temp_output_name}",
+            "--save-vid",
+            "--save-txt",
+        ]
 
 
     try:
